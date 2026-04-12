@@ -1,0 +1,6 @@
+# MCP server dependencies — hardened architecture (identical to baseline)
+# mcp[cli] includes uvicorn + starlette for SSE transport
+mcp[cli]
+httpx
+psycopg2-binary
+boto3

@@ -1,0 +1,6 @@
+# MCP server dependencies — baseline architecture
+# mcp[cli] includes uvicorn + starlette needed for SSE transport (HTTP server mode)
+mcp[cli]
+httpx
+psycopg2-binary
+boto3

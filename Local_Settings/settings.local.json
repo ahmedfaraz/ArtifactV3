@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(terraform init:*)",
+      "Bash(terraform validate:*)",
+      "Bash(python3 -c ':*)",
+      "Bash(bash -n ../mock_data/seed_secrets.sh)",
+      "Bash(bash -n ../mock_data/seed_secrets_hardened.sh)",
+      "Bash(bash -n attacks/run_all.sh)",
+      "Bash(bash -n attacks/collect_logs.sh)",
+      "Bash(python3 results/visualise_results.py --output-dir /tmp/mcp_charts_test)",
+      "Bash(pip install:*)",
+      "Bash(python3 -c \"import matplotlib; print\\(matplotlib.__version__\\)\")",
+      "Bash(python -c \"import matplotlib; print\\(matplotlib.__version__\\)\")",
+      "Bash(python -m pip install matplotlib numpy --quiet)",
+      "Bash(python results/visualise_results.py --results-dir results --output-dir /tmp/mcp_charts_test)"
+    ]
+  }
+}
