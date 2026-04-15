@@ -1,0 +1,74 @@
+# =============================================================================
+# Terraform
+# =============================================================================
+
+# Provider binaries and module cache (re-created by terraform init)
+**/.terraform/
+
+# Lock file SHOULD be committed — it pins provider versions for reproducibility
+# !**/.terraform.lock.hcl
+
+# State files — contain sensitive output values (ARNs, IPs, passwords) in plaintext
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+# Variable files often contain secrets (db_password, alert_email, etc.)
+*.tfvars
+*.tfvars.json
+
+# Override files (local developer customisations — not for sharing)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Crash log
+crash.log
+crash.*.log
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# =============================================================================
+# Experiment output (generated at runtime — not source artefacts)
+# =============================================================================
+
+# Empirical results written by run_all.sh / collect_logs.sh
+results/baseline/
+results/hardened/
+
+# Exfiltration capture log (contains mock credential payloads)
+results/exfil_received.log
+
+# Generated charts (re-created by visualise_results.py)
+results/charts/
+
+# Attacker EC2 staging artefacts
+results/*/listener_stdout.log
+
+# =============================================================================
+# OS / Editor
+# =============================================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
