@@ -98,7 +98,7 @@ resource "aws_route_table_association" "public_secondary" {
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "ecs" {
   name        = "mcp-baseline-ecs-sg"
-  description = "Baseline ECS task SG — inbound 8080 open to world (intentional)"
+  description = "Baseline ECS task SG - inbound 8080 open to world (intentional)"
   vpc_id      = aws_vpc.main.id
 
   ingress {
