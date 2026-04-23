@@ -186,57 +186,18 @@ resource "aws_ecs_service" "mcp" {
 # ---------------------------------------------------------------------------
 # Retrieve ECS task public IP via external data source
 #
-# Polls AWS CLI every 15 seconds (max 6 minutes) until a running task is
-# found and its Elastic Network Interface has a public IP assigned.
+# Delegates to fetch_ip.py (same directory) which polls AWS CLI every 15 s
+# for up to 6 minutes.  Using a Python file avoids shell-escaping and CRLF
+# issues that occur when embedding bash scripts in Terraform heredocs on
+# Windows/WSL environments.
 #
-# If the Docker image has not yet been pushed to ECR, the task will fail
-# to start and this will return "unavailable-push-image-and-reapply".
-# Resolution: push the image, then run terraform apply again.
+# If the Docker image has not yet been pushed to ECR the task will fail to
+# start and the script returns "unavailable-push-image-and-reapply".
+# Resolution: push the image then run terraform apply again.
 # ---------------------------------------------------------------------------
-locals {
-  # Script reads JSON query from stdin; all $VAR references use $$ for
-  # Terraform-level escaping (Terraform renders $$ → $ in the shell script).
-  fetch_ip_script = <<EOT
-set -euo pipefail
-INPUT=$$(cat)
-CLUSTER=$$(echo "$$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['cluster'])")
-SERVICE=$$(echo "$$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['service'])")
-REGION=$$(echo "$$INPUT"  | python3 -c "import sys,json; print(json.load(sys.stdin)['region'])")
-for i in $$(seq 1 24); do
-  TASK=$$(aws ecs list-tasks \
-    --cluster "$$CLUSTER" \
-    --service-name "$$SERVICE" \
-    --region "$$REGION" \
-    --query 'taskArns[0]' \
-    --output text 2>/dev/null || echo "")
-  if [ -n "$$TASK" ] && [ "$$TASK" != "None" ]; then
-    ENI=$$(aws ecs describe-tasks \
-      --cluster "$$CLUSTER" \
-      --tasks "$$TASK" \
-      --region "$$REGION" \
-      --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value | [0]' \
-      --output text 2>/dev/null || echo "")
-    if [ -n "$$ENI" ] && [ "$$ENI" != "None" ]; then
-      IP=$$(aws ec2 describe-network-interfaces \
-        --network-interface-ids "$$ENI" \
-        --region "$$REGION" \
-        --query 'NetworkInterfaces[0].Association.PublicIp' \
-        --output text 2>/dev/null || echo "")
-      if [ -n "$$IP" ] && [ "$$IP" != "None" ] && [ "$$IP" != "null" ]; then
-        printf '{"public_ip":"%s"}' "$$IP"
-        exit 0
-      fi
-    fi
-  fi
-  sleep 15
-done
-printf '{"public_ip":"unavailable-push-image-and-reapply"}'
-EOT
-}
-
 data "external" "task_ip" {
   depends_on = [aws_ecs_service.mcp]
-  program    = ["bash", "-c", local.fetch_ip_script]
+  program    = ["python3", "${path.module}/fetch_ip.py"]
   query = {
     cluster = aws_ecs_cluster.mcp.name
     service = aws_ecs_service.mcp.name
