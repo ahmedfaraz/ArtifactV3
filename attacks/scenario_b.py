@@ -37,8 +37,8 @@ CREDENTIAL_PATTERNS = [
 # Both paths demonstrate the same vulnerability; the fallback ensures the
 # scenario produces valid results even when EFS has not been seeded yet.
 CREDENTIALS_PATHS = [
-    "/mnt/data/config/credentials.env",   # EFS-backed (preferred)
-    "/proc/1/environ",                    # process env fallback
+    "/proc/1/environ",                    # process env (always present; used first)
+    "/mnt/data/config/credentials.env",   # EFS-backed (available after seed_secrets.sh)
 ]
 
 

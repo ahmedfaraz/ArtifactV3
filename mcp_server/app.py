@@ -28,8 +28,11 @@ mcp = FastMCP("mcp-baseline")
 @mcp.tool()
 def file_reader(path: str) -> str:
     """Read the contents of a file at the given path."""
-    with open(path) as fh:
-        return fh.read()
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    # Replace null bytes (present in /proc/*/environ) with newlines so the
+    # content is valid UTF-8 text and does not corrupt the SSE response stream.
+    return raw.replace(b"\x00", b"\n").decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------
@@ -38,10 +41,12 @@ def file_reader(path: str) -> str:
 # (169.254.170.2) to steal IAM task-role credentials.
 # ---------------------------------------------------------------------------
 @mcp.tool()
-def http_client(url: str) -> str:
-    """Fetch a URL and return the response body."""
+def http_client(url: str, method: str = "GET", body: str = "") -> str:
+    """Fetch a URL and return the response body. Supports GET and POST."""
     import urllib.request
-    with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
+    data = body.encode("utf-8") if method.upper() == "POST" and body else None
+    req = urllib.request.Request(url, data=data, method=method.upper())  # noqa: S310
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
         return resp.read().decode("utf-8", errors="replace")
 
 
