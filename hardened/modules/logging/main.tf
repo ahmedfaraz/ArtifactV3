@@ -221,16 +221,8 @@ resource "aws_cloudtrail" "main" {
     }
   }
 
-  # Data events: all Secrets Manager secrets
-  event_selector {
-    read_write_type           = "All"
-    include_management_events = false
-
-    data_resource {
-      type   = "AWS::SecretsManager::Secret"
-      values = ["arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:*"]
-    }
-  }
+  # Secrets Manager API calls (GetSecretValue etc.) are management events,
+  # not data events — captured by the first event_selector above.
 
   depends_on = [
     aws_s3_bucket_policy.cloudtrail,

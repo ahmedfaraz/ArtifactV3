@@ -68,10 +68,6 @@ resource "aws_ecs_task_definition" "mcp" {
     }
   }
 
-  # tmpfs volume for writable /tmp (readonlyRootFilesystem = true requires this)
-  volume {
-    name = "tmp"
-  }
 
   container_definitions = jsonencode([
     {
@@ -130,11 +126,6 @@ resource "aws_ecs_task_definition" "mcp" {
           sourceVolume  = "mcp-data"
           readOnly      = false
         },
-        {
-          containerPath = "/tmp"
-          sourceVolume  = "tmp"
-          readOnly      = false
-        }
       ]
 
       # readonlyRootFilesystem: prevents writing to the container layer
@@ -199,46 +190,11 @@ resource "aws_ecs_service" "mcp" {
 # ---------------------------------------------------------------------------
 # Retrieve private IP of the running ECS task (for run_all.sh attacker EC2)
 # Polls every 15s up to 6 minutes. Returns "unavailable" if task not running.
+# Uses a Python script to avoid bash heredoc CRLF issues on Windows-sourced files.
 # ---------------------------------------------------------------------------
-locals {
-  fetch_private_ip_script = <<EOT
-set -euo pipefail
-INPUT=$$(cat)
-CLUSTER=$$(echo "$$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['cluster'])")
-SERVICE=$$(echo "$$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['service'])")
-REGION=$$(echo  "$$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['region'])")
-for i in $$(seq 1 24); do
-  TASK=$$(aws ecs list-tasks \
-    --cluster "$$CLUSTER" --service-name "$$SERVICE" \
-    --region "$$REGION" --query 'taskArns[0]' \
-    --output text 2>/dev/null || echo "")
-  if [ -n "$$TASK" ] && [ "$$TASK" != "None" ]; then
-    ENI=$$(aws ecs describe-tasks \
-      --cluster "$$CLUSTER" --tasks "$$TASK" \
-      --region "$$REGION" \
-      --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value | [0]' \
-      --output text 2>/dev/null || echo "")
-    if [ -n "$$ENI" ] && [ "$$ENI" != "None" ]; then
-      IP=$$(aws ec2 describe-network-interfaces \
-        --network-interface-ids "$$ENI" \
-        --region "$$REGION" \
-        --query 'NetworkInterfaces[0].PrivateIpAddress' \
-        --output text 2>/dev/null || echo "")
-      if [ -n "$$IP" ] && [ "$$IP" != "None" ]; then
-        printf '{"private_ip":"%s"}' "$$IP"
-        exit 0
-      fi
-    fi
-  fi
-  sleep 15
-done
-printf '{"private_ip":"unavailable-push-image-and-reapply"}'
-EOT
-}
-
 data "external" "task_ip" {
   depends_on = [aws_ecs_service.mcp]
-  program    = ["bash", "-c", local.fetch_private_ip_script]
+  program    = ["python3", "${path.module}/fetch_private_ip.py"]
   query = {
     cluster = aws_ecs_cluster.mcp.name
     service = aws_ecs_service.mcp.name

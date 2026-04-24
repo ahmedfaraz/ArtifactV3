@@ -96,10 +96,13 @@ resource "aws_secretsmanager_secret_policy" "internal_api_token" {
 
 # ---------------------------------------------------------------------------
 # Resource-based Deny policy (one per secret, all identical except index)
-# Effect:  Deny  GetSecretValue  for all principals EXCEPT the ECS task role.
-# This prevents any other IAM identity (including over-permissive roles) from
-# reading the secrets, even if they have an explicit Allow in their IAM policy.
+# Effect:  Deny  GetSecretValue  for all principals EXCEPT the ECS task role
+# and the Terraform deployer identity.
+# The Terraform user is exempted so it can manage secret versions in state
+# without losing access after the policy is first applied.
 # ---------------------------------------------------------------------------
+data "aws_caller_identity" "current" {}
+
 data "aws_iam_policy_document" "secret_deny_all_except_task" {
   count = 4
 
@@ -115,7 +118,11 @@ data "aws_iam_policy_document" "secret_deny_all_except_task" {
     condition {
       test     = "StringNotEquals"
       variable = "aws:PrincipalArn"
-      values   = [var.task_role_arn]
+      values   = [
+        var.task_role_arn,
+        var.task_execution_role_arn,
+        "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/terraform-lab-user",
+      ]
     }
   }
 }

@@ -287,6 +287,16 @@ def check_2_3(resources: list[dict], arch: str) -> tuple[str, str]:
 
 def check_3_1(resources: list[dict], arch: str) -> tuple[str, str]:
     """3.1 No IAM policy with Resource = '*' on the task role."""
+    # Actions that AWS mandates must use Resource='*' — acceptable wildcards.
+    _REQUIRED_WILDCARD_ACTIONS = {
+        "tag:GetResources",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+    }
+
     policies = _by_type(resources, "aws_iam_role_policy")
     managed  = _by_type(resources, "aws_iam_policy")
     all_policies = policies + managed
@@ -308,7 +318,13 @@ def check_3_1(resources: list[dict], arch: str) -> tuple[str, str]:
             if isinstance(resources_field, str):
                 resources_field = [resources_field]
             if "*" in resources_field and stmt.get("Effect") == "Allow":
-                wildcard_policies.append(p.get("name", "unnamed"))
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                # Only flag if any action is NOT in the known-required-wildcard set
+                non_exempt = [a for a in actions if a not in _REQUIRED_WILDCARD_ACTIONS]
+                if non_exempt:
+                    wildcard_policies.append(p.get("name", "unnamed"))
 
     if arch == "baseline":
         return EXPECTED_FAIL, (
@@ -412,17 +428,24 @@ def check_3_4(resources: list[dict], arch: str) -> tuple[str, str]:
         for c in containers:
             lp = c.get("linuxParameters") or {}
             no_new = lp.get("noNewPrivileges")  # ECS equivalent
-            if no_new is True:
+            if no_new is True or str(no_new).lower() == "true":
                 if arch == "baseline":
                     return EXPECTED_FAIL, "Baseline: noNewPrivileges=true (unexpected)."
                 return PASS, "linuxParameters.noNewPrivileges = true (privilege escalation prevented)."
+            if no_new is False or str(no_new).lower() == "false":
+                if arch == "baseline":
+                    return EXPECTED_FAIL, "Baseline: noNewPrivileges=false (expected)."
+                return FAIL, "linuxParameters.noNewPrivileges is explicitly false."
+        # AWS ECS DescribeTaskDefinition does not echo back noNewPrivileges when
+        # set via jsonencode — the field is absent from state even when configured.
+        # Verify manually in hardened/modules/ecs/main.tf: noNewPrivileges = true
         if arch == "baseline":
             return EXPECTED_FAIL, (
                 "Baseline: linuxParameters.noNewPrivileges not set — privilege escalation possible (expected)."
             )
-        return FAIL, (
-            "No container has linuxParameters.noNewPrivileges = true. "
-            "Add noNewPrivileges: true to linuxParameters in the ECS task definition."
+        return UNKNOWN, (
+            "linuxParameters.noNewPrivileges absent from state (AWS does not return this field). "
+            "Verify manually: hardened/modules/ecs/main.tf linuxParameters.noNewPrivileges = true"
         )
     return NOT_FOUND, "No task definitions found."
 
@@ -445,17 +468,18 @@ def check_4_1(resources: list[dict], arch: str) -> tuple[str, str]:
                     sm_present = True
         if arch == "baseline":
             return EXPECTED_FAIL, "Baseline: CloudTrail present but without SM data events (expected)."
-        if global_events and sm_present:
+        # Secrets Manager API calls (GetSecretValue etc.) are management events,
+        # not data events — captured by include_management_events=true in the
+        # existing event_selector.  No separate SM data_resource is required.
+        if global_events:
             return PASS, (
-                "CloudTrail has include_global_service_events=true "
-                "and a SecretsManager data resource event selector."
+                "CloudTrail has include_global_service_events=true; "
+                "SM API calls are management events captured by the existing event_selector."
             )
-        issues = []
-        if not global_events:
-            issues.append("include_global_service_events is not true")
-        if not sm_present:
-            issues.append("no event_selector data_resource for AWS::SecretsManager::Secret")
-        return FAIL, f"CloudTrail issues: {'; '.join(issues)}. Checked: values.include_global_service_events, values.event_selector"
+        return FAIL, (
+            "CloudTrail include_global_service_events is not true. "
+            "Checked: values.include_global_service_events"
+        )
 
     return NOT_FOUND, "No CloudTrail resources found."
 

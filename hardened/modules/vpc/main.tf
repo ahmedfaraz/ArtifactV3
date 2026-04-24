@@ -132,7 +132,7 @@ resource "aws_route_table_association" "private_secondary" {
 # (implicit deny; return traffic is stateful and does not need egress rules)
 resource "aws_security_group" "endpoints" {
   name        = "mcp-hardened-endpoints-sg"
-  description = "VPC Endpoints — inbound 443 from ECS SG only"
+  description = "VPC Endpoints - inbound 443 from ECS SG only"
   vpc_id      = aws_vpc.main.id
 
   tags = { Name = "mcp-hardened-endpoints-sg" }
@@ -141,7 +141,7 @@ resource "aws_security_group" "endpoints" {
 # RDS SG — provisioned here so ECS SG can reference it
 resource "aws_security_group" "rds" {
   name        = "mcp-hardened-rds-sg"
-  description = "RDS — inbound 5432 from ECS SG only"
+  description = "RDS - inbound 5432 from ECS SG only"
   vpc_id      = aws_vpc.main.id
 
   tags = { Name = "mcp-hardened-rds-sg" }
@@ -150,7 +150,7 @@ resource "aws_security_group" "rds" {
 # ECS SG — must be created after endpoint and rds SGs (referenced in egress)
 resource "aws_security_group" "ecs" {
   name        = "mcp-hardened-ecs-sg"
-  description = "Hardened ECS — inbound 8080 from VPC CIDR; outbound scoped"
+  description = "Hardened ECS - inbound 8080 from VPC CIDR; outbound scoped"
   vpc_id      = aws_vpc.main.id
 
   tags = { Name = "mcp-hardened-ecs-sg" }
@@ -163,6 +163,20 @@ resource "aws_vpc_security_group_ingress_rule" "ecs_8080_from_vpc" {
   cidr_ipv4         = "10.0.0.0/16"
   from_port         = 8080
   to_port           = 8080
+  ip_protocol       = "tcp"
+}
+
+data "aws_prefix_list" "s3" {
+  name = "com.amazonaws.${var.aws_region}.s3"
+}
+
+# ----- ECS egress — TCP/443 to S3 Gateway Endpoint (ECR image layer blobs) -----
+resource "aws_vpc_security_group_egress_rule" "ecs_to_s3_443" {
+  security_group_id = aws_security_group.ecs.id
+  description       = "Allow outbound TCP/443 to S3 Gateway Endpoint for ECR image layers"
+  prefix_list_id    = data.aws_prefix_list.s3.id
+  from_port         = 443
+  to_port           = 443
   ip_protocol       = "tcp"
 }
 

@@ -109,6 +109,8 @@ def _classify_aws_call(service: str, operation: str, session: boto3.Session, reg
         # Auth errors mean the request REACHED the AWS endpoint
         if code in (
             "InvalidClientTokenId",
+            "InvalidAccessKeyId",
+            "UnrecognizedClientException",
             "AuthFailure",
             "AccessDenied",
             "UnauthorizedOperation",

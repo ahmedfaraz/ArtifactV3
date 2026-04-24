@@ -37,6 +37,15 @@ resource "aws_vpc_security_group_ingress_rule" "efs_nfs_from_ecs" {
   ip_protocol                  = "tcp"
 }
 
+resource "aws_vpc_security_group_egress_rule" "ecs_to_efs_2049" {
+  security_group_id            = var.ecs_sg_id
+  description                  = "Allow outbound TCP/2049 from ECS to EFS SG"
+  referenced_security_group_id = aws_security_group.efs.id
+  from_port                    = 2049
+  to_port                      = 2049
+  ip_protocol                  = "tcp"
+}
+
 # ---------------------------------------------------------------------------
 # Mount Target — private subnet only; transit encryption enabled
 # ---------------------------------------------------------------------------

@@ -55,3 +55,8 @@ output "sns_topic_arn" {
   description = "SNS topic ARN for secret-access alarms"
   value       = module.logging.sns_topic_arn
 }
+
+output "attacker_public_ip" {
+  description = "Public IP of the attacker EC2 (SSH in, run attack scripts from here)"
+  value       = aws_instance.attacker.public_ip
+}

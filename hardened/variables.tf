@@ -29,3 +29,9 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+variable "key_name" {
+  description = "AWS EC2 key pair name for SSH access to the attacker EC2"
+  type        = string
+  default     = "mcp-lab-key"
+}

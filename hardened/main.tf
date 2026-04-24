@@ -107,10 +107,11 @@ module "rds" {
 # Secrets — Secrets Manager resources + resource-based Deny policies
 # ---------------------------------------------------------------------------
 module "secrets" {
-  source        = "./modules/secrets"
-  architecture  = "hardened"
-  aws_region    = var.aws_region
-  task_role_arn = module.iam.task_role_arn
+  source                  = "./modules/secrets"
+  architecture            = "hardened"
+  aws_region              = var.aws_region
+  task_role_arn           = module.iam.task_role_arn
+  task_execution_role_arn = module.iam.task_execution_role_arn
 }
 
 # ---------------------------------------------------------------------------
@@ -133,6 +134,57 @@ module "logging" {
 # exist before the first ECS task starts, eliminating the detection blind
 # spot during container startup (see dissertation §4.3).
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Attacker EC2 — public subnet, reaches private ECS task via VPC routing.
+# ECS SG already allows inbound 8080 from VPC CIDR (10.0.0.0/16).
+# ---------------------------------------------------------------------------
+data "aws_ami" "amazon_linux_2023" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
+}
+
+resource "aws_security_group" "attacker" {
+  name        = "mcp-hardened-attacker-sg"
+  description = "Attacker EC2 - SSH inbound, all outbound"
+  vpc_id      = module.vpc.vpc_id
+  tags        = { Name = "mcp-hardened-attacker-sg" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "attacker_ssh" {
+  security_group_id = aws_security_group.attacker.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 22
+  to_port           = 22
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "attacker_all_out" {
+  security_group_id = aws_security_group.attacker.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_instance" "attacker" {
+  ami                         = data.aws_ami.amazon_linux_2023.id
+  instance_type               = "t3.micro"
+  subnet_id                   = module.vpc.public_subnet_id
+  associate_public_ip_address = true
+  vpc_security_group_ids      = [aws_security_group.attacker.id]
+  key_name                    = var.key_name
+
+  user_data = <<-EOF
+    #!/bin/bash
+    dnf install -y python3-pip git
+    pip3 install boto3 "mcp[cli]"
+  EOF
+
+  tags = { Name = "mcp-hardened-attacker-ec2" }
+}
+
 module "ecs" {
   source       = "./modules/ecs"
   architecture = "hardened"
