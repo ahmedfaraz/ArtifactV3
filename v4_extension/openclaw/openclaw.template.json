@@ -1,0 +1,24 @@
+{
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-sonnet-4-6"
+    }
+  },
+  "mcp": {
+    "servers": {
+      "artifact-mcp": {
+        "url": "http://<MCP_SERVER_IP>:8080/sse",
+        "transport": "sse"
+      }
+    }
+  },
+  "gateway": {
+    "channels": {
+      "webchat": {
+        "enabled": true,
+        "port": 18788,
+        "bind": "127.0.0.1"
+      }
+    }
+  }
+}

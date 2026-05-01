@@ -158,6 +158,73 @@ under each affected item.
 
 ---
 
+## Section 5 — Agent Layer Controls (v4 Extension)
+
+The following five controls address the agent-mediated attack surface introduced by
+Scenario D.  They apply when an MCP server is accessed through an LLM-based agent host
+(such as OpenClaw) rather than directly by a human client.  Controls 5.1 and 5.4 are
+agent-side and cannot be verified from Terraform state — they are marked MANUAL in
+`checklist_validator.py`.
+
+---
+
+**5.1** Ensure that **MCP tool descriptions are defined in server code and are not modifiable by end users** or by content retrieved from external sources at runtime.
+
+- **AWS service / config:** Application-level control — tool descriptions are hardcoded in `mcp_server/app.py`; no API endpoint exposes description editing
+- **Risk addressed:** Scenario D — if tool descriptions could be altered by an attacker (e.g. via a poisoned third-party MCP server description), they could redirect the agent's intent without requiring a prompt injection in file content (M1 agent-mediated attack vector)
+- **OWASP MCP Top 10 mapping:** MCP-05 (Injection via Tool Metadata) [CITATION NEEDED — verify current OWASP MCP Top 10 numbering]
+- **OWASP LLM Top 10 (2025) mapping:** LLM01 (Prompt Injection)
+- **Evidence:** Liu, Y., Deng, G., Li, Y., Wang, K., Zhang, T., Liu, Y., Wang, H., Zheng, Y. and Liu, Y., 2024. Prompt Injection Attack Against LLM-Integrated Applications. *arXiv preprint*, arXiv:2306.05499. Available at: https://arxiv.org/abs/2306.05499
+- **Validator:** MANUAL — verify in `mcp_server/app.py` that `@mcp.tool()` decorators are the only mechanism for registering tools and that no runtime registration endpoint exists
+
+---
+
+**5.2** Implement **agent-side input validation** before forwarding tool arguments to the MCP server: reject or sanitise arguments that contain instruction-like patterns (imperative sentences, role-override phrases, URL patterns pointing outside the expected set).
+
+- **AWS service / config:** Agent host configuration (OpenClaw `agents.defaults` or custom middleware); not an AWS control
+- **Risk addressed:** Scenario D — even if an injection instruction reaches the agent context via `file_reader`, agent-side argument sanitisation can prevent the resulting `db_query` and `http_client` calls from being issued with attacker-controlled parameters (M1 reduction)
+- **OWASP MCP Top 10 mapping:** MCP-03 (Insufficient Tool Argument Validation) [CITATION NEEDED]
+- **OWASP LLM Top 10 (2025) mapping:** LLM01 (Prompt Injection)
+- **Evidence:** Radosevich, B. and Halloran, J., 2025. RADE: Red-teaming Agentic Document Extraction. *arXiv preprint*, arXiv:2501.XXXXX [CITATION NEEDED — verify arXiv ID]. See also: Yang, Z. et al., 2025. MCPSECBENCH: Benchmarking Security of MCP-Based Applications. *arXiv preprint* [CITATION NEEDED].
+- **Validator:** MANUAL — no Terraform equivalent; review agent configuration and test with `scenario_d.py --dry-run` after implementing filtering
+
+---
+
+**5.3** Apply a **cloud-level egress allow-list** that restricts outbound connections from the MCP server ECS task to only known destinations (RDS, VPC Endpoints), even when requests originate from an agent-mediated tool call rather than a direct API call.
+
+- **AWS service / config:** Same `aws_vpc_security_group_egress_rule` controls as items 1.2; no new Terraform resource required — the existing hardened egress rules already apply regardless of the call origin
+- **Risk addressed:** Scenario D M1b — the agent's `http_client` call targets the attacker's listener; the ECS task's security group egress restriction blocks the TCP connection before it leaves the VPC, preventing data delivery even if the agent complied with the injection (M1b → 0% on hardened)
+- **OWASP MCP Top 10 mapping:** MCP-08 (Uncontrolled Resource Access) [CITATION NEEDED]
+- **OWASP LLM Top 10 (2025) mapping:** LLM08 (Excessive Agency)
+- **Evidence:** National Institute of Standards and Technology (NIST), 2020. *Security and Privacy Controls for Information Systems and Organizations* (SP 800-53 Rev. 5). Control SC-7 (Boundary Protection). Gaithersburg, MD: NIST. Available at: https://doi.org/10.6028/NIST.SP.800-53r5
+- **Terraform reference:** `hardened/modules/vpc/main.tf` — `aws_vpc_security_group_egress_rule.ecs_to_endpoints_443`, `aws_vpc_security_group_egress_rule.ecs_to_rds_5432`
+- **Validator:** Automated — `checklist_validator.py` item 5.3 checks that no `0.0.0.0/0` egress rule exists on the ECS security group
+
+---
+
+**5.4** Ensure that **MCP tool response content is sanitised before it re-enters the agent context** — specifically, that the agent host does not pass raw tool output directly as a new system prompt or instruction block.
+
+- **AWS service / config:** Agent host configuration; not an AWS control — depends on the agent framework's prompt construction logic (OpenClaw, LangChain, etc.)
+- **Risk addressed:** Scenario D — the indirect prompt injection attack chain relies on the agent treating file content as trusted instructions; if the agent host wraps tool results in a clearly-delimited `<tool_output>` block that the LLM is instructed to treat as data rather than instructions, the injection success rate decreases (M1a reduction)
+- **OWASP MCP Top 10 mapping:** MCP-05 (Injection via Tool Metadata / Output) [CITATION NEEDED]
+- **OWASP LLM Top 10 (2025) mapping:** LLM01 (Prompt Injection)
+- **Evidence:** Hasan, M. et al., 2025. MCP Universe: A Survey on the Model Context Protocol and its Security Implications. *arXiv preprint* [CITATION NEEDED — verify arXiv ID and authorship].
+- **Validator:** MANUAL — review the agent host's prompt construction template; verify tool results are wrapped in a delimiter that the system prompt explicitly marks as untrusted data
+
+---
+
+**5.5** Scope the MCP server's `http_client` tool so that it **only accepts POST requests to an explicit allow-list of URLs**; reject arbitrary POST bodies to arbitrary endpoints at the application level in addition to the network-level egress control (item 5.3).
+
+- **AWS service / config:** Application-level control in `mcp_server_hardened/app.py`; should be combined with the network egress SG (item 5.3) for defence-in-depth — neither control alone is sufficient
+- **Risk addressed:** Scenario D — agent-mediated injection causes `http_client` to POST customer data to an attacker URL; an allow-list in the hardened MCP server rejects the call at the application layer before the network-level egress SG is even reached (M1a reduction on hardened in addition to M1b)
+- **OWASP MCP Top 10 mapping:** MCP-04 (Excessive Permissions) [CITATION NEEDED]
+- **OWASP LLM Top 10 (2025) mapping:** LLM08 (Excessive Agency)
+- **Evidence:** Open Web Application Security Project (OWASP), 2021. *OWASP Top 10:2021 — A01 Broken Access Control*. Beaverton, OR: OWASP Foundation. Available at: https://owasp.org/Top10/A01_2021-Broken_Access_Control/
+- **Terraform reference:** `mcp_server_hardened/app.py` — `http_client` tool URL allowlist (verify implementation)
+- **Validator:** MANUAL — no Terraform equivalent; verify `mcp_server_hardened/app.py` contains a URL allowlist check in the `http_client` function
+
+---
+
 ## Limitations
 
 > **Known gap:** EFS file read operations do not generate CloudTrail data

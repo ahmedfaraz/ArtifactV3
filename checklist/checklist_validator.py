@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Purpose: Validates the 14 MCP hardening checklist items against a Terraform
+Purpose: Validates the 19 MCP hardening checklist items against a Terraform
          state file (terraform show -json output or terraform.tfstate).
+         Items 1.1–4.4 cover cloud-layer controls (original 14 items).
+         Items 5.1–5.5 cover agent-layer controls (v4 extension, 2026-04-30).
+         Agent-layer items 5.1, 5.2, 5.4, 5.5 are MANUAL — they cannot be
+         derived from Terraform state. Item 5.3 is automated.
          For --architecture baseline, all security controls are expected to
          fail; this is reported as EXPECTED FAIL (BASELINE) rather than FAIL,
          allowing the same script to document both vulnerable and secure states.
@@ -553,6 +557,106 @@ def check_4_4(resources: list[dict], arch: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Section 5 — Agent Layer Controls (v4 extension, added 2026-04-30)
+# Checks 5.1, 5.2, 5.4, 5.5 are MANUAL (agent-side, not derivable from state).
+# Check 5.3 is automated: confirms no 0.0.0.0/0 egress rule exists on ECS SG.
+# ---------------------------------------------------------------------------
+
+def check_5_1(resources: list[dict], arch: str) -> tuple[str, str]:
+    """5.1 Tool descriptions not user-controllable — MANUAL check."""
+    return UNKNOWN, (
+        "MANUAL: Tool descriptions must be hardcoded in mcp_server/app.py and "
+        "not modifiable at runtime via any API endpoint. "
+        "Verify that no route in app.py accepts tool description updates from "
+        "user input or from fetched external content. "
+        "Cannot be verified from Terraform state. "
+        "OWASP MCP Top 10: MCP-05 | OWASP LLM Top 10 (2025): LLM01"
+    )
+
+
+def check_5_2(resources: list[dict], arch: str) -> tuple[str, str]:
+    """5.2 Agent-side input validation before tool argument forwarding — MANUAL."""
+    return UNKNOWN, (
+        "MANUAL: The agent host (OpenClaw or equivalent) should validate tool "
+        "call arguments before forwarding them to the MCP server, rejecting "
+        "instruction-like patterns and unexpected URL targets. "
+        "Cannot be verified from Terraform state — review agent configuration "
+        "and test with scenario_d.py. "
+        "OWASP MCP Top 10: MCP-03 | OWASP LLM Top 10 (2025): LLM01"
+    )
+
+
+def check_5_3(resources: list[dict], arch: str) -> tuple[str, str]:
+    """5.3 ECS SG has no 0.0.0.0/0 egress rule (egress allow-list applies to agent calls too)."""
+    # Check both granular egress rules and inline egress blocks in aws_security_group
+    egress_rules = _by_type(resources, "aws_vpc_security_group_egress_rule")
+    sgs = _by_type(resources, "aws_security_group")
+
+    world_egress: list[str] = []
+
+    for r in egress_rules:
+        cidr = _attr(r, "cidr_ipv4") or ""
+        if cidr == "0.0.0.0/0":
+            world_egress.append(f"aws_vpc_security_group_egress_rule/{r.get('name', 'unnamed')}")
+
+    for sg in sgs:
+        for rule in (_attr(sg, "egress") or []):
+            if not isinstance(rule, dict):
+                continue
+            if "0.0.0.0/0" in (rule.get("cidr_blocks") or []):
+                world_egress.append(f"aws_security_group/{sg.get('name', 'unnamed')} egress")
+
+    if arch == "baseline":
+        if world_egress:
+            return EXPECTED_FAIL, (
+                f"Baseline: {len(world_egress)} unrestricted egress rule(s) found (expected). "
+                f"Rules: {world_egress}"
+            )
+        return EXPECTED_FAIL, "Baseline: egress check — state shows no explicit open egress (may be default-allow)."
+
+    if world_egress:
+        return FAIL, (
+            f"{len(world_egress)} SG resource(s) have a 0.0.0.0/0 egress rule: {world_egress}. "
+            "Egress must be restricted to VPC endpoints and RDS only (items 1.2 and 5.3)."
+        )
+
+    if not egress_rules and not sgs:
+        return NOT_FOUND, "No aws_vpc_security_group_egress_rule or aws_security_group found in state."
+
+    return PASS, (
+        "No 0.0.0.0/0 egress rule found on ECS security group. "
+        "Cloud-level egress restriction applies to agent-initiated http_client calls (Scenario D M1b)."
+    )
+
+
+def check_5_4(resources: list[dict], arch: str) -> tuple[str, str]:
+    """5.4 MCP tool response sanitised before re-entering agent context — MANUAL."""
+    return UNKNOWN, (
+        "MANUAL: The agent host must wrap tool results in a clearly-delimited block "
+        "(e.g. <tool_output>...</tool_output>) and instruct the LLM to treat the "
+        "content as data, not as instructions. "
+        "Cannot be verified from Terraform state — review OpenClaw agent configuration "
+        "and system prompt template. "
+        "OWASP MCP Top 10: MCP-05 | OWASP LLM Top 10 (2025): LLM01"
+    )
+
+
+def check_5_5(resources: list[dict], arch: str) -> tuple[str, str]:
+    """5.5 http_client tool has URL allow-list in hardened server — MANUAL."""
+    # The allow-list is in application code (mcp_server_hardened/app.py), not Terraform.
+    # We can verify the egress SG as a proxy signal but the app-level check is MANUAL.
+    return UNKNOWN, (
+        "MANUAL: mcp_server_hardened/app.py must implement a URL allow-list in the "
+        "http_client tool that rejects POST requests to arbitrary endpoints. "
+        "Verify that the function raises an error for URLs not in the approved set. "
+        "Cannot be verified from Terraform state. "
+        "Note: the network-level egress SG (item 5.3) provides defence-in-depth but "
+        "is not a substitute for the application-level allow-list. "
+        "OWASP MCP Top 10: MCP-04 | OWASP LLM Top 10 (2025): LLM08"
+    )
+
+
+# ---------------------------------------------------------------------------
 # All checks in order
 # ---------------------------------------------------------------------------
 CHECKS = [
@@ -570,6 +674,12 @@ CHECKS = [
     ("4.2", "CloudWatch log group /mcp/.*/app",                           check_4_2),
     ("4.3", "SecretAccessCount alarm threshold <= 3",                     check_4_3),
     ("4.4", "ECS depends_on logging module (manual check)",               check_4_4),
+    # Section 5 — Agent layer controls (v4 extension)
+    ("5.1", "Tool descriptions not user-controllable (MANUAL)",           check_5_1),
+    ("5.2", "Agent-side input validation before tool calls (MANUAL)",     check_5_2),
+    ("5.3", "ECS SG no 0.0.0.0/0 egress (applies to agent calls)",       check_5_3),
+    ("5.4", "Tool response sanitised before re-entering agent (MANUAL)",  check_5_4),
+    ("5.5", "http_client URL allow-list in hardened server (MANUAL)",     check_5_5),
 ]
 
 

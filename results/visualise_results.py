@@ -16,10 +16,16 @@ Metrics:   M1 (attack success rate), M3 (detection visibility),
 # How to update:
 #   1. Open results/baseline/scenario_a_results.json  -> read m1_success_rate_pct
 #                                                       and m3_log_events_generated
-#   2. Repeat for scenario_b and scenario_c (both architectures)
+#   2. Repeat for scenario_b, scenario_c, scenario_d (both architectures)
 #   3. Replace the corresponding values in DATA_M1 and DATA_M3 below
 #   4. Update CONTROL_EFFECTIVENESS cells from Table 4.4 empirical values
 #   5. Re-run: python3 results/visualise_results.py
+#
+# Scenario D (v4 extension) added 2026-04-30:
+#   - DATA_M1["baseline"][3] and DATA_M1["hardened"][3] cover Scenario D
+#   - M1 for D = m1a_agent_issued_db_query_pct (agent-side metric)
+#   - DATA_M3["hardened"][3] covers agent-layer log events
+#   - CONTROL_EFFECTIVENESS gains an "Agent Layer" row
 # ---------------------------------------------------------------------------
 
 import argparse
@@ -37,13 +43,13 @@ import numpy as np
 # Structure: { "baseline": [A, B, C], "hardened": [A, B, C] }
 # ---------------------------------------------------------------------------
 DATA_M1 = {
-    "baseline": [100.0, 100.0, 100.0],  # All scenarios succeed on baseline
-    "hardened": [0.0,   0.0,   0.0],    # All scenarios blocked on hardened
+    "baseline": [100.0, 100.0, 100.0, 100.0],  # A, B, C, D — all succeed on baseline
+    "hardened": [0.0,   0.0,   0.0,   50.0],   # D expected partial — agent call succeeds but egress blocked
 }
 
 DATA_M3 = {
-    "baseline": [0.0,   0.0,   0.0],    # No structured logging on baseline
-    "hardened": [100.0, 100.0, 100.0],  # Full detection on hardened
+    "baseline": [0.0,   0.0,   0.0,   0.0],    # No structured logging on baseline
+    "hardened": [100.0, 100.0, 100.0, 50.0],   # D: agent-side detection partial (see dissertation)
 }
 
 # Control effectiveness: rows = control families, cols = M1, M2, M3
@@ -54,6 +60,7 @@ CONTROL_EFFECTIVENESS = {
         "Container Hardening",
         "Managed Identities\n+ Secrets Mgmt",
         "Logging &\nMonitoring",
+        "Agent Layer\nControls (v4)",
     ],
     "cols": ["M1\n(Attack Rate)", "M2\n(Scope)", "M3\n(Detection)"],
     "data": [
@@ -61,6 +68,7 @@ CONTROL_EFFECTIVENESS = {
         [2, 2, 1],  # Container Hardening
         [3, 3, 2],  # Managed Identities + Secrets Management
         [0, 0, 3],  # Logging and Monitoring
+        [1, 1, 1],  # Agent Layer Controls — low effect: cloud controls catch delivery, not intent
     ],
     "labels": {
         0: "None",
@@ -70,7 +78,7 @@ CONTROL_EFFECTIVENESS = {
     },
 }
 
-SCENARIOS = ["Scenario A", "Scenario B", "Scenario C"]
+SCENARIOS = ["Scenario A", "Scenario B", "Scenario C", "Scenario D"]
 COLOUR_BASELINE = "#D32F2F"   # red
 COLOUR_HARDENED = "#388E3C"   # green
 
@@ -86,14 +94,15 @@ def _load_empirical(results_dir: str) -> None:
     in-place if files are found.  Missing or null values are left as defaults.
     """
     for arch_key, arch_dir in [("baseline", "baseline"), ("hardened", "hardened")]:
-        for idx, letter in enumerate(("a", "b", "c")):
+        for idx, letter in enumerate(("a", "b", "c", "d")):
             path = os.path.join(results_dir, arch_dir, f"scenario_{letter}_results.json")
             if not os.path.exists(path):
                 continue
             try:
                 with open(path, encoding="utf-8") as fh:
                     data = json.load(fh)
-                m1 = data.get("m1_success_rate_pct")
+                # Scenario D uses m1a (agent-side) as the primary M1 metric
+                m1 = data.get("m1a_agent_issued_db_query_pct", data.get("m1_success_rate_pct"))
                 m3 = data.get("m3_log_events_generated")
                 if m1 is not None:
                     DATA_M1[arch_key][idx] = float(m1)
