@@ -1,2 +1,7 @@
+# MCP Security Dashboard (v4 — HTML + FastAPI)
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+# Legacy Streamlit deps kept so the old dashboard still runs if needed:
 streamlit
 pandas
